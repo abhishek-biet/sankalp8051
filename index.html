@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>8051 Assembly Simulator (Basic)</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --panel-bg: #2d2d2d;
+            --text-color: #d4d4d4;
+            --accent: #007acc;
+            --border: #444;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            gap: 20px;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        h2, h3 { margin-top: 0; color: #fff; }
+        .panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+        .editor-panel { flex: 2; }
+        .state-panel { flex: 1; overflow-y: auto; }
+        
+        textarea {
+            flex: 1;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid var(--border);
+            padding: 10px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            resize: none;
+            outline: none;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background-color: #005f9e; }
+        
+        .register-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .register {
+            background: #1e1e1e;
+            padding: 8px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            font-family: monospace;
+            border: 1px solid var(--border);
+        }
+        .reg-name { color: #569cd6; font-weight: bold; }
+        .reg-value { color: #b5cea8; }
+
+        .log {
+            background: #1e1e1e;
+            padding: 10px;
+            border: 1px solid var(--border);
+            height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 14px;
+            color: #ce9178;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="panel editor-panel">
+        <h2>Assembly Code</h2>
+        <textarea id="asm-code" spellcheck="false">
+; Basic 8051 Test Code
+; Supported ops in this demo: MOV, ADD, INC
+
+MOV A, #10      ; Load 10 (decimal) into Accumulator
+MOV R0, #5      ; Load 5 into R0
+ADD A, R0       ; Add R0 to A. (A should become 15)
+INC A           ; Increment A (A should become 16)
+MOV B, A        ; Copy A to B
+        </textarea>
+        <button onclick="runCode()">Run Code</button>
+        
+        <h3 style="margin-top: 20px;">Execution Log</h3>
+        <div id="log-output" class="log"></div>
+    </div>
+
+    <div class="panel state-panel">
+        <h3>Registers</h3>
+        <div class="register-grid" id="register-display">
+            </div>
+    </div>
+
+    <script>
+        // 1. Architecture State
+        const state = {
+            registers: {
+                A: 0, B: 0, 
+                R0: 0, R1: 0, R2: 0, R3: 0, 
+                R4: 0, R5: 0, R6: 0, R7: 0,
+                PC: 0, DPTR: 0
+            }
+        };
+
+        // 2. UI Update Logic
+        function updateUI() {
+            const regDisplay = document.getElementById('register-display');
+            regDisplay.innerHTML = '';
+            
+            for (const [reg, val] of Object.entries(state.registers)) {
+                // Convert value to hex for display
+                const hexVal = "0x" + val.toString(16).toUpperCase().padStart(reg === 'DPTR' || reg === 'PC' ? 4 : 2, '0');
+                
+                regDisplay.innerHTML += `
+                    <div class="register">
+                        <span class="reg-name">${reg}</span>
+                        <span class="reg-value">${hexVal}</span>
+                    </div>
+                `;
+            }
+        }
+
+        function log(message) {
+            const logOut = document.getElementById('log-output');
+            logOut.innerHTML += `<div>${message}</div>`;
+            logOut.scrollTop = logOut.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log-output').innerHTML = '';
+        }
+
+        function resetState() {
+            for (let reg in state.registers) {
+                state.registers[reg] = 0;
+            }
+        }
+
+        // 3. Instruction Execution Engine
+        function getValue(operand) {
+            // Immediate value (e.g., #10 or #0Ah)
+            if (operand.startsWith('#')) {
+                let valStr = operand.substring(1);
+                // Simple hex handler if ends with H
+                if (valStr.endsWith('H')) {
+                    return parseInt(valStr.slice(0, -1), 16);
+                }
+                return parseInt(valStr, 10); 
+            }
+            // Register value
+            if (state.registers[operand] !== undefined) {
+                return state.registers[operand];
+            }
+            throw new Error(`Unknown operand: ${operand}`);
+        }
+
+        function executeInstruction(opcode, op1, op2) {
+            try {
+                switch(opcode) {
+                    case 'MOV':
+                        if (state.registers[op1] !== undefined) {
+                            state.registers[op1] = getValue(op2);
+                        } else {
+                            throw new Error(`Invalid destination: ${op1}`);
+                        }
+                        break;
+                    case 'ADD':
+                        if (op1 === 'A') {
+                            state.registers.A = (state.registers.A + getValue(op2)) & 0xFF; // Keep within 8 bits
+                        } else {
+                            throw new Error(`ADD destination must be A`);
+                        }
+                        break;
+                    case 'INC':
+                        if (state.registers[op1] !== undefined) {
+                            state.registers[op1] = (state.registers[op1] + 1) & 0xFF;
+                        } else {
+                            throw new Error(`Cannot increment ${op1}`);
+                        }
+                        break;
+                    default:
+                        throw new Error(`Unsupported instruction: ${opcode}`);
+                }
+            } catch (e) {
+                log(`<span style="color: red;">Error at PC=${state.registers.PC}: ${e.message}</span>`);
+            }
+        }
+
+        // 4. Main Parsing Loop
+        function runCode() {
+            resetState();
+            clearLog();
+            log("--- Execution Started ---");
+
+            const code = document.getElementById('asm-code').value;
+            const lines = code.split('\n');
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].split(';')[0].trim().toUpperCase(); // Remove comments & whitespace
+                if (!line) continue;
+
+                // Split by spaces and commas
+                let parts = line.replace(/,/g, ' ').split(/\s+/);
+                
+                let opcode = parts[0];
+                let op1 = parts[1] || null;
+                let op2 = parts[2] || null;
+
+                log(`Executing: ${line}`);
+                executeInstruction(opcode, op1, op2);
+                
+                state.registers.PC++;
+            }
+
+            log("--- Execution Finished ---");
+            updateUI();
+        }
+
+        // Initialize UI on load
+        updateUI();
+    </script>
+</body>
+</html>
